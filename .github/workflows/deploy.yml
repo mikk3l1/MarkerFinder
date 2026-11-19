@@ -24,6 +24,10 @@ jobs:
           node-version-file: .nvmrc
           cache: npm
       - run: npm ci
+        env:
+          # onnxruntime-node (dev-only, used by scripts/eval.ts on CPU) otherwise downloads
+          # optional CUDA binaries from GitHub on Linux x64; that download can 404 and fail the build.
+          ONNXRUNTIME_NODE_INSTALL_CUDA: skip
       - run: npm run build
       - uses: actions/upload-pages-artifact@v3
         with:

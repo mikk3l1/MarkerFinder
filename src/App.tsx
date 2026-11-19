@@ -1,11 +1,13 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
+import { CropView } from './CropView';
 import { ImageViewer, type Mark } from './ImageViewer';
 import type { CapResult } from './pipeline/types';
-import { decodeImage, Scanner, type ScanProgress } from './scanner';
+import { decodeImage, fullRegion, isFullRegion, Scanner, type Region, type ScanProgress } from './scanner';
 import { searchResults } from './search';
 
 type Phase =
   | { kind: 'empty' }
+  | { kind: 'cropping' }
   | { kind: 'scanning'; progress: ScanProgress | null }
   | { kind: 'ready'; results: CapResult[] }
   | { kind: 'error'; message: string };
@@ -15,6 +17,8 @@ const STAGE_LABEL = { load: 'Loading recognition models…', detect: 'Finding ma
 export default function App() {
   const scanner = useRef<Scanner | null>(null);
   const [bitmap, setBitmap] = useState<ImageBitmap | null>(null);
+  /** Area of the photo to scan, in bitmap pixels. */
+  const [region, setRegion] = useState<Region | null>(null);
   const [phase, setPhase] = useState<Phase>({ kind: 'empty' });
   const [query, setQuery] = useState('');
   const [submitted, setSubmitted] = useState('');
@@ -24,11 +28,19 @@ export default function App() {
   const fileInput = useRef<HTMLInputElement>(null);
   const searchInput = useRef<HTMLInputElement>(null);
 
-  const runScan = async (bmp: ImageBitmap) => {
+  // Download and initialize the recognition engines while the user takes or picks a photo.
+  useEffect(() => {
+    const conn = (navigator as Navigator & { connection?: { saveData?: boolean } }).connection;
+    if (conn?.saveData) return;
+    scanner.current ??= new Scanner();
+    scanner.current.preload();
+  }, []);
+
+  const runScan = async (bmp: ImageBitmap, area: Region) => {
     scanner.current ??= new Scanner();
     setPhase({ kind: 'scanning', progress: null });
     try {
-      const results = await scanner.current.scan(bmp, (progress) => setPhase({ kind: 'scanning', progress }));
+      const results = await scanner.current.scan(bmp, area, (progress) => setPhase({ kind: 'scanning', progress }));
       setPhase({ kind: 'ready', results });
     } catch (err) {
       if (err instanceof DOMException && err.name === 'AbortError') return;
@@ -42,15 +54,17 @@ export default function App() {
       const bmp = await decodeImage(file);
       bitmap?.close();
       setBitmap(bmp);
+      setRegion(fullRegion(bmp));
       setSubmitted('');
       setShowAll(false);
-      void runScan(bmp);
+      setPhase({ kind: 'cropping' });
     } catch {
       setPhase({ kind: 'error', message: 'This file could not be opened as an image. Use a JPEG, PNG or WebP photo.' });
     }
   };
 
   const results = phase.kind === 'ready' ? phase.results : null;
+  const cropped = !!bitmap && !!region && !isFullRegion(region, bitmap);
   const search = useMemo(() => (results && submitted ? searchResults(results, submitted) : null), [results, submitted]);
 
   const marks: Mark[] = useMemo(() => {
@@ -95,9 +109,16 @@ export default function App() {
             <button type="button" className="btn-ghost" onClick={() => fileInput.current?.click()}>
               New photo
             </button>
-            <button type="button" className="btn-ghost" disabled={phase.kind === 'scanning'} onClick={() => bitmap && void runScan(bitmap)}>
-              Rescan
-            </button>
+            {phase.kind !== 'cropping' && (
+              <>
+                <button type="button" className="btn-ghost" onClick={() => setPhase({ kind: 'cropping' })}>
+                  Crop
+                </button>
+                <button type="button" className="btn-ghost" disabled={phase.kind === 'scanning'} onClick={() => bitmap && region && void runScan(bitmap, region)}>
+                  Rescan
+                </button>
+              </>
+            )}
           </div>
         )}
       </header>
@@ -126,7 +147,24 @@ export default function App() {
         </main>
       )}
 
-      {bitmap && (
+      {bitmap && region && phase.kind === 'cropping' && (
+        <main className="workspace">
+          <div className="cropbar">
+            <p>Drag to select the part of the photo to search. A smaller area scans faster.</p>
+            <div className="cropbar-actions">
+              <button type="button" className="btn-secondary" disabled={!cropped} onClick={() => setRegion(fullRegion(bitmap))}>
+                Whole photo
+              </button>
+              <button type="button" className="btn-primary" onClick={() => void runScan(bitmap, region)}>
+                Scan {cropped ? 'area' : 'photo'}
+              </button>
+            </div>
+          </div>
+          <CropView bitmap={bitmap} region={region} onChange={setRegion} />
+        </main>
+      )}
+
+      {bitmap && region && phase.kind !== 'cropping' && (
         <main className="workspace">
           <form className="searchbar" onSubmit={onSearch}>
             <input
@@ -147,9 +185,9 @@ export default function App() {
             </button>
           </form>
 
-          <Status phase={phase} pct={pct} search={search} counts={counts} showAll={showAll} onToggleAll={() => setShowAll((v) => !v)} />
+          <Status phase={phase} pct={pct} search={search} counts={counts} cropped={cropped} showAll={showAll} onToggleAll={() => setShowAll((v) => !v)} />
 
-          <ImageViewer bitmap={bitmap} marks={marks} focusKey={focusKey} />
+          <ImageViewer bitmap={bitmap} region={cropped ? region : null} marks={marks} focusKey={focusKey} />
         </main>
       )}
     </div>
@@ -161,6 +199,7 @@ function Status({
   pct,
   search,
   counts,
+  cropped,
   showAll,
   onToggleAll,
 }: {
@@ -168,6 +207,7 @@ function Status({
   pct: number | null;
   search: ReturnType<typeof searchResults> | null;
   counts: { confirmed: number; uncertain: number } | null;
+  cropped: boolean;
   showAll: boolean;
   onToggleAll: () => void;
 }) {
@@ -191,7 +231,7 @@ function Status({
   if (counts.confirmed + counts.uncertain === 0) {
     return (
       <p className="msg msg-warn" role="status">
-        No marker codes were recognized. Try a sharper photo, taken closer and straight from above, in even light.
+        No marker codes were recognized{cropped ? ' in the selected area' : ''}. Try a sharper photo, taken closer and straight from above, in even light.
       </p>
     );
   }
@@ -237,7 +277,7 @@ function Status({
   }
   return (
     <p className="msg msg-warn" role="status">
-      {query} was not found in this photo. Its code may be hidden, blurry or covered by another marker.
+      {query} was not found in {cropped ? 'the selected area' : 'this photo'}. Its code may be hidden, blurry or covered by another marker.
     </p>
   );
 }

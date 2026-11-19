@@ -47,8 +47,14 @@ try {
   await page.goto(`${origin}/`);
   await page.screenshot({ path: `${outDir}/1-intro.png` });
 
-  const t0 = Date.now();
+  // Models start downloading on page load, before a photo is chosen.
+  await page.waitForResponse((r) => r.url().endsWith('/models/en-rec/rec.onnx'), { timeout: 30000 });
+
   await page.locator('input[type=file]:not([capture])').setInputFiles(timingOnly ?? 'samples/PXL_20261117_133709353.jpg');
+  await page.getByRole('button', { name: 'Scan photo' }).waitFor();
+  await page.screenshot({ path: `${outDir}/1b-crop.png` });
+  const t0 = Date.now();
+  await page.getByRole('button', { name: 'Scan photo' }).click();
   await page.getByText(/Read \d+ codes|No marker codes|Recognition failed/).waitFor({ timeout: 240000 });
   const status = await page.locator('.msg').first().innerText();
   console.log(`scan: ${((Date.now() - t0) / 1000).toFixed(1)} s — ${status}`);
@@ -78,6 +84,30 @@ try {
   const after = await page.locator('.msg').first().innerText();
   console.log(`after rescan: ${after}`);
   if (!/^Found YR313/.test(after)) failures.push(`rescan: ${after}`);
+
+  // Crop to the left half: drag the right edge of the selection to the middle.
+  await page.getByRole('button', { name: 'Crop' }).click();
+  const box = (await page.locator('.viewer-canvas').boundingBox())!;
+  const imgRight = await page.evaluate(() => {
+    const c = document.querySelector('.viewer-canvas') as HTMLCanvasElement;
+    return c.clientWidth - 16; // photo is fitted with a 16 px pad; a landscape photo fills the width
+  });
+  const midY = box.y + box.height / 2;
+  await page.mouse.move(box.x + imgRight, midY);
+  await page.mouse.down();
+  await page.mouse.move(box.x + (16 + imgRight) / 2, midY, { steps: 8 });
+  await page.mouse.up();
+  await page.screenshot({ path: `${outDir}/8-crop-left.png` });
+  const tc = Date.now();
+  await page.getByRole('button', { name: 'Scan area' }).click();
+  // The last query (YR313) stays active and is re-applied to the new results.
+  await page.locator('.status').waitFor({ state: 'visible', timeout: 10000 });
+  await page.locator('.status').waitFor({ state: 'detached', timeout: 240000 });
+  const cropStatus = await page.locator('.msg').first().innerText();
+  console.log(`cropped scan: ${((Date.now() - tc) / 1000).toFixed(1)} s — ${cropStatus}`);
+  if (/Recognition failed|No marker codes/.test(cropStatus)) failures.push(`cropped scan status: ${cropStatus}`);
+  await page.screenshot({ path: `${outDir}/9-cropped-result.png` });
+  if (!/not found in the selected area/.test(await search('BG3', '10-cropped-bg3'))) failures.push('cropped search: absent code not reported for the selected area');
 
   if (offOrigin.length) failures.push(`off-origin requests: ${offOrigin.join(', ')}`);
 } catch (e) {

@@ -22,7 +22,6 @@ export default function App() {
   const [phase, setPhase] = useState<Phase>({ kind: 'empty' });
   const [query, setQuery] = useState('');
   const [submitted, setSubmitted] = useState('');
-  const [focusKey, setFocusKey] = useState(0);
   const [showAll, setShowAll] = useState(false);
   const cameraInput = useRef<HTMLInputElement>(null);
   const fileInput = useRef<HTMLInputElement>(null);
@@ -94,7 +93,6 @@ export default function App() {
   const onSearch = (e: React.FormEvent) => {
     e.preventDefault();
     setSubmitted(query);
-    setFocusKey((k) => k + 1);
     searchInput.current?.blur();
   };
 
@@ -187,7 +185,7 @@ export default function App() {
 
           <Status phase={phase} pct={pct} search={search} counts={counts} cropped={cropped} showAll={showAll} onToggleAll={() => setShowAll((v) => !v)} />
 
-          <ImageViewer bitmap={bitmap} region={cropped ? region : null} marks={marks} focusKey={focusKey} />
+          <ImageViewer bitmap={bitmap} region={cropped ? region : null} marks={marks} />
         </main>
       )}
     </div>

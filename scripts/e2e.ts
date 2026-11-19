@@ -85,6 +85,29 @@ try {
   console.log(`after rescan: ${after}`);
   if (!/^Found YR313/.test(after)) failures.push(`rescan: ${after}`);
 
+  // "New photo" offers camera and storage; Escape closes the menu.
+  await page.getByRole('button', { name: 'New photo' }).click();
+  const items = await page.getByRole('menuitem').allInnerTexts();
+  await page.screenshot({ path: `${outDir}/7b-new-photo-menu.png` });
+  if (items.join('|') !== 'Take photo|Choose photo') failures.push(`new photo menu items: ${items.join(', ')}`);
+  await page.keyboard.press('Escape');
+  if (await page.getByRole('menu').count()) failures.push('new photo menu did not close on Escape');
+  for (const [item, camera] of [['Take photo', true], ['Choose photo', false]] as const) {
+    await page.getByRole('button', { name: 'New photo' }).click();
+    const [chooser] = await Promise.all([page.waitForEvent('filechooser', { timeout: 5000 }), page.getByRole('menuitem', { name: item }).click()]);
+    const hasCapture = await chooser.element().evaluate((el) => el.hasAttribute('capture'));
+    if (hasCapture !== camera) failures.push(`${item} opened the wrong input (capture=${hasCapture})`);
+    if (await page.getByRole('menu').count()) failures.push(`menu still open after ${item}`);
+    if (item === 'Choose photo') {
+      // Picking a photo leads to the crop step; choosing the same sample keeps the rest of the test valid.
+      await chooser.setFiles('samples/PXL_20261117_133709353.jpg');
+      await page.getByRole('button', { name: 'Scan photo' }).waitFor({ timeout: 10000 });
+      await page.getByRole('button', { name: 'Scan photo' }).click();
+      await page.getByText(/Read \d+ codes|No marker codes|Recognition failed/).waitFor({ timeout: 240000 });
+      await search('YR313', '7c-after-new-photo');
+    }
+  }
+
   // Crop to the left half: drag the right edge of the selection to the middle.
   await page.getByRole('button', { name: 'Crop' }).click();
   const box = (await page.locator('.viewer-canvas').boundingBox())!;

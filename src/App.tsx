@@ -104,9 +104,7 @@ export default function App() {
         <h1>Marker Finder</h1>
         {bitmap && (
           <div className="topbar-actions">
-            <button type="button" className="btn-ghost" onClick={() => fileInput.current?.click()}>
-              New photo
-            </button>
+            <NewPhotoMenu onCamera={() => cameraInput.current?.click()} onFiles={() => fileInput.current?.click()} />
             {phase.kind !== 'cropping' && (
               <>
                 <button type="button" className="btn-ghost" onClick={() => setPhase({ kind: 'cropping' })}>
@@ -187,6 +185,58 @@ export default function App() {
 
           <ImageViewer bitmap={bitmap} region={cropped ? region : null} marks={marks} />
         </main>
+      )}
+    </div>
+  );
+}
+
+/** "New photo" button with a menu: take a photo with the camera or choose one from storage. */
+function NewPhotoMenu({ onCamera, onFiles }: { onCamera: () => void; onFiles: () => void }) {
+  const [open, setOpen] = useState(false);
+  const root = useRef<HTMLDivElement>(null);
+  const button = useRef<HTMLButtonElement>(null);
+  const firstItem = useRef<HTMLButtonElement>(null);
+
+  useEffect(() => {
+    if (!open) return;
+    firstItem.current?.focus();
+    const onPointerDown = (e: PointerEvent) => {
+      if (!root.current?.contains(e.target as Node)) setOpen(false);
+    };
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        setOpen(false);
+        button.current?.focus();
+      }
+    };
+    document.addEventListener('pointerdown', onPointerDown);
+    document.addEventListener('keydown', onKeyDown);
+    return () => {
+      document.removeEventListener('pointerdown', onPointerDown);
+      document.removeEventListener('keydown', onKeyDown);
+    };
+  }, [open]);
+
+  // The file input must be opened from the click itself (user gesture), so call it before closing.
+  const pick = (open: () => void) => {
+    open();
+    setOpen(false);
+  };
+
+  return (
+    <div className="menu-root" ref={root}>
+      <button ref={button} type="button" className="btn-ghost" aria-haspopup="menu" aria-expanded={open} onClick={() => setOpen((v) => !v)}>
+        New photo
+      </button>
+      {open && (
+        <div className="menu" role="menu" aria-label="New photo">
+          <button ref={firstItem} type="button" role="menuitem" onClick={() => pick(onCamera)}>
+            Take photo
+          </button>
+          <button type="button" role="menuitem" onClick={() => pick(onFiles)}>
+            Choose photo
+          </button>
+        </div>
       )}
     </div>
   );

@@ -9,6 +9,12 @@ export interface DetectOptions {
   maxRadiusFrac?: number;
   /** Hough accumulator threshold for the final pass (lower = more circles). */
   accumulator?: number;
+  /**
+   * Long side (px) of the full photo when `img` is a crop of it. Scale and radius
+   * bounds are derived from this, so a crop is processed exactly like the same
+   * region of the full photo. Defaults to the long side of `img`.
+   */
+  refSize?: number;
 }
 
 interface Circle {
@@ -66,8 +72,8 @@ export function mergeCircles<T extends { x: number; y: number; r: number }>(list
  */
 export function detectCaps(cv: CV, img: RGBAImage, opts: DetectOptions = {}): Cap[] {
   const workSize = opts.workSize ?? 1600;
-  const longSide = Math.max(img.width, img.height);
-  const scale = Math.min(1, workSize / longSide);
+  const refSize = opts.refSize ?? Math.max(img.width, img.height);
+  const scale = Math.min(1, workSize / refSize);
 
   const src = cv.matFromImageData(img);
   const small = new cv.Mat();
@@ -91,7 +97,7 @@ export function detectCaps(cv: CV, img: RGBAImage, opts: DetectOptions = {}): Ca
   planes.delete();
   cv.medianBlur(sat, sat, 5);
 
-  const ws = Math.max(gray.cols, gray.rows);
+  const ws = Math.round(refSize * scale);
   const minR = Math.round(ws * (opts.minRadiusFrac ?? 0.01));
   const maxR = Math.round(ws * (opts.maxRadiusFrac ?? 0.06));
 

@@ -7,8 +7,22 @@ export interface ScanProgress {
   total: number;
 }
 
+/** A rectangle in image pixels. */
+export interface Region {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+}
+
 /** Longest image side sent to recognition; larger photos are downscaled to save memory. */
 const MAX_SIDE = 4096;
+
+const baseUrl = () => new URL(import.meta.env.BASE_URL, document.baseURI).href;
+
+export const fullRegion = (bitmap: ImageBitmap): Region => ({ x: 0, y: 0, width: bitmap.width, height: bitmap.height });
+
+export const isFullRegion = (r: Region, bitmap: ImageBitmap) => r.x === 0 && r.y === 0 && r.width === bitmap.width && r.height === bitmap.height;
 
 /** Owns the recognition worker. One scan at a time; a new scan supersedes the old one. */
 export class Scanner {
@@ -20,14 +34,22 @@ export class Scanner {
     return this.worker;
   }
 
-  scan(bitmap: ImageBitmap, onProgress: (p: ScanProgress) => void): Promise<CapResult[]> {
+  /** Start downloading and initializing the recognition engines (~29 MB) before the first scan. */
+  preload(): void {
+    const msg: WorkerRequest = { type: 'preload', baseUrl: baseUrl() };
+    this.getWorker().postMessage(msg);
+  }
+
+  /** Scan `region` of `bitmap`. Returned caps are in full-bitmap coordinates. */
+  scan(bitmap: ImageBitmap, region: Region, onProgress: (p: ScanProgress) => void): Promise<CapResult[]> {
     const id = ++this.seq;
+    const { x, y, width, height } = region;
     const canvas = document.createElement('canvas');
-    canvas.width = bitmap.width;
-    canvas.height = bitmap.height;
+    canvas.width = width;
+    canvas.height = height;
     const ctx = canvas.getContext('2d', { willReadFrequently: true })!;
-    ctx.drawImage(bitmap, 0, 0);
-    const imgData = ctx.getImageData(0, 0, bitmap.width, bitmap.height);
+    ctx.drawImage(bitmap, x, y, width, height, 0, 0, width, height);
+    const imgData = ctx.getImageData(0, 0, width, height);
     canvas.width = canvas.height = 0;
 
     const worker = this.getWorker();
@@ -43,7 +65,7 @@ export class Scanner {
         if (m.type === 'progress') onProgress({ stage: m.stage, done: m.done, total: m.total });
         else {
           worker.removeEventListener('message', onMessage);
-          if (m.type === 'result') resolve(m.results);
+          if (m.type === 'result') resolve(m.results.map((r) => ({ ...r, cx: r.cx + x, cy: r.cy + y })));
           else reject(new Error(m.message));
         }
       };
@@ -51,7 +73,8 @@ export class Scanner {
       const msg: WorkerRequest = {
         type: 'scan',
         id,
-        baseUrl: new URL(import.meta.env.BASE_URL, document.baseURI).href,
+        baseUrl: baseUrl(),
+        refSize: Math.max(bitmap.width, bitmap.height),
         image: { data: imgData.data, width: imgData.width, height: imgData.height },
       };
       worker.postMessage(msg, [imgData.data.buffer]);

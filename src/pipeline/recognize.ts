@@ -1,5 +1,5 @@
 import type { CV } from './cv';
-import { detectCaps } from './detectCaps';
+import { detectCaps, type DetectOptions } from './detectCaps';
 import { parseCode } from './codes';
 import type { OcrEngine } from './ocr';
 import { analyzeCap, uprightCandidate, type OrientOptions } from './orientText';
@@ -14,6 +14,7 @@ export interface RecognizeOptions {
   /** Max caps OCR'd concurrently (should be ≥ the OCR worker count). */
   concurrency?: number;
   orient?: OrientOptions;
+  detect?: DetectOptions;
 }
 
 interface Reading {
@@ -85,7 +86,7 @@ export async function readCap(cv: CV, src: CV, cap: Cap, ocr: OcrEngine, opts: R
  */
 export async function recognize(cv: CV, img: RGBAImage, ocr: OcrEngine, opts: RecognizeOptions = {}): Promise<CapResult[]> {
   opts.onProgress?.(0, 1, 'detect');
-  const caps = detectCaps(cv, img);
+  const caps = detectCaps(cv, img, opts.detect);
   opts.onProgress?.(1, 1, 'detect');
   const src = cv.matFromImageData(img);
   const out: CapResult[] = new Array(caps.length);

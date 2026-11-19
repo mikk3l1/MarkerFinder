@@ -1,13 +1,14 @@
 import { useCallback, useEffect, useRef } from 'react';
 import type { CapResult } from './pipeline/types';
+import type { Region } from './scanner';
 
 export type Mark = { cap: CapResult; kind: 'match' | 'uncertain' | 'similar' | 'all' };
 
 interface Props {
   bitmap: ImageBitmap;
+  /** Scanned part of the photo; the rest is dimmed. Null when the whole photo was scanned. */
+  region: Region | null;
   marks: Mark[];
-  /** Changes when the view should zoom to the marks (e.g. a new search). */
-  focusKey: number;
 }
 
 interface View {
@@ -19,7 +20,7 @@ interface View {
 const COLORS = { match: '#16a34a', uncertain: '#d97706', similar: '#d97706', all: '#2563eb' };
 
 /** Photo viewer with pinch/drag/wheel zoom and circle highlights drawn in image space. */
-export function ImageViewer({ bitmap, marks, focusKey }: Props) {
+export function ImageViewer({ bitmap, region, marks }: Props) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const view = useRef<View>({ scale: 1, tx: 0, ty: 0 });
   const pointers = useRef(new Map<number, { x: number; y: number }>());
@@ -47,6 +48,16 @@ export function ImageViewer({ bitmap, marks, focusKey }: Props) {
     ctx.drawImage(bitmap, 0, 0);
 
     const px = 1 / scale; // one screen pixel in image units
+    if (region) {
+      ctx.beginPath();
+      ctx.rect(0, 0, bitmap.width, bitmap.height);
+      ctx.rect(region.x, region.y, region.width, region.height);
+      ctx.fillStyle = 'rgba(0,0,0,0.5)';
+      ctx.fill('evenodd');
+      ctx.strokeStyle = 'rgba(255,255,255,0.8)';
+      ctx.lineWidth = 2 * px;
+      ctx.strokeRect(region.x, region.y, region.width, region.height);
+    }
     // Dim everything except matches when there are search highlights.
     const hl = marksRef.current.filter((m) => m.kind !== 'all');
     if (hl.length) {
@@ -93,14 +104,16 @@ export function ImageViewer({ bitmap, marks, focusKey }: Props) {
       ctx.fillStyle = '#fff';
       ctx.fillText(label, lx, ly);
     }
-  }, [bitmap]);
+  }, [bitmap, region]);
 
+  /** Fit the scanned area (or the whole photo) to the view. */
   const fit = useCallback(() => {
     const c = canvasRef.current;
     if (!c) return;
-    const s = Math.min(c.clientWidth / bitmap.width, c.clientHeight / bitmap.height);
-    view.current = { scale: s, tx: (c.clientWidth - bitmap.width * s) / 2, ty: (c.clientHeight - bitmap.height * s) / 2 };
-  }, [bitmap]);
+    const { x, y, width, height } = region ?? { x: 0, y: 0, width: bitmap.width, height: bitmap.height };
+    const s = Math.min(8, c.clientWidth / width, c.clientHeight / height);
+    view.current = { scale: s, tx: (c.clientWidth - width * s) / 2 - x * s, ty: (c.clientHeight - height * s) / 2 - y * s };
+  }, [bitmap, region]);
 
   const minScale = () => {
     const c = canvasRef.current!;
@@ -122,23 +135,6 @@ export function ImageViewer({ bitmap, marks, focusKey }: Props) {
     ro.observe(c);
     return () => ro.disconnect();
   }, [bitmap, fit, draw]);
-
-  // Zoom to search results.
-  useEffect(() => {
-    const c = canvasRef.current;
-    if (!c) return;
-    const hl = marksRef.current.filter((m) => m.kind !== 'all');
-    if (hl.length === 0) {
-      if (focusKey) fit();
-    } else {
-      const xs = hl.flatMap((m) => [m.cap.cx - m.cap.r * 3, m.cap.cx + m.cap.r * 3]);
-      const ys = hl.flatMap((m) => [m.cap.cy - m.cap.r * 3, m.cap.cy + m.cap.r * 3]);
-      const [x0, x1, y0, y1] = [Math.min(...xs), Math.max(...xs), Math.min(...ys), Math.max(...ys)];
-      const s = Math.min(8, Math.min(c.clientWidth / (x1 - x0), c.clientHeight / (y1 - y0)));
-      view.current = { scale: s, tx: c.clientWidth / 2 - ((x0 + x1) / 2) * s, ty: c.clientHeight / 2 - ((y0 + y1) / 2) * s };
-    }
-    draw();
-  }, [focusKey, fit, draw]);
 
   useEffect(() => draw(), [marks, draw]);
 
@@ -213,7 +209,7 @@ export function ImageViewer({ bitmap, marks, focusKey }: Props) {
       <div className="viewer-controls">
         <button type="button" aria-label="Zoom in" onClick={() => { const c = canvasRef.current!; zoomAt(c.clientWidth / 2, c.clientHeight / 2, 1.6); draw(); }}>+</button>
         <button type="button" aria-label="Zoom out" onClick={() => { const c = canvasRef.current!; zoomAt(c.clientWidth / 2, c.clientHeight / 2, 1 / 1.6); draw(); }}>−</button>
-        <button type="button" aria-label="Fit photo" onClick={() => { fit(); draw(); }}>⤢</button>
+        <button type="button" aria-label={region ? 'Fit scanned area' : 'Fit photo'} onClick={() => { fit(); draw(); }}>⤢</button>
       </div>
     </div>
   );

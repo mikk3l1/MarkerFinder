@@ -20,6 +20,8 @@ npm run preview    # serve dist/
 
 One scan per photo runs in a Web Worker. Searching reads only the stored results and never rescans.
 
+The worker starts downloading and initializing the models (~29 MB) when the app opens, so this overlaps with taking the photo (skipped when the browser's data saver is on). After a photo is chosen, the user can crop it to the part that holds the markers. Only that region is scanned, and scan time scales with the number of caps in it (a quarter of the photo scans about 4× faster). A crop is processed at the same scale as the full photo ([detectCaps.ts](src/pipeline/detectCaps.ts) `refSize`), so cap sizes and detection thresholds don't change.
+
 1. **Cap detection** ([detectCaps.ts](src/pipeline/detectCaps.ts)): OpenCV Hough circles on a 1600 px copy of the photo. The typical cap radius is estimated first, by scanning radius bands for the band whose circles cover the most area. Circles are then searched for on luminance and on saturation (pastel caps against white barrels) and merged.
 2. **Orientation** ([orientText.ts](src/pipeline/orientText.ts)): per cap, an adaptive-threshold text mask with rim and arc components removed, then a projection-profile search for the text line angle. The code is always the tallest line and sits on top. That layout rule picks between θ and θ+180 and isolates the code line.
 3. **Recognition** ([paddleRec.ts](src/pipeline/paddleRec.ts)): PP-OCRv5 English text-line recognizer (ONNX, 7.8 MB) on ONNX Runtime Web (WASM, single-threaded).

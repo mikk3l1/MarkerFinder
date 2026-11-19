@@ -10,8 +10,14 @@ import { createPaddleEngine } from './paddleRec';
 import { recognize } from './recognize';
 import type { CapResult, RGBAImage } from './types';
 
-/** `baseUrl` is the absolute app root; relative URLs inside a worker resolve against the worker script. */
-export type WorkerRequest = { type: 'scan'; id: number; image: RGBAImage; baseUrl: string };
+/**
+ * `baseUrl` is the absolute app root; relative URLs inside a worker resolve against the worker script.
+ * `refSize` is the long side of the full photo when `image` is a crop of it.
+ * `preload` downloads and initializes the engines ahead of the first scan.
+ */
+export type WorkerRequest =
+  | { type: 'scan'; id: number; image: RGBAImage; baseUrl: string; refSize?: number }
+  | { type: 'preload'; baseUrl: string };
 export type WorkerResponse =
   | { type: 'progress'; id: number; stage: 'load' | 'detect' | 'ocr'; done: number; total: number }
   | { type: 'result'; id: number; results: CapResult[]; ms: number }
@@ -45,7 +51,11 @@ const post = (m: WorkerResponse) => (self as DedicatedWorkerGlobalScope).postMes
 
 self.onmessage = async (e: MessageEvent<WorkerRequest>) => {
   const msg = e.data;
-  if (msg.type !== 'scan') return;
+  if (msg.type === 'preload') {
+    // Failure is not reported here: engines reset on error and the next scan retries and reports it.
+    loadEngines(msg.baseUrl).catch(() => undefined);
+    return;
+  }
   const { id } = msg;
   try {
     post({ type: 'progress', id, stage: 'load', done: 0, total: 1 });
@@ -53,6 +63,7 @@ self.onmessage = async (e: MessageEvent<WorkerRequest>) => {
     const t0 = performance.now();
     const results = await recognize(cv, msg.image, ocr, {
       concurrency: 2,
+      detect: { refSize: msg.refSize },
       onProgress: (done, total, stage) => post({ type: 'progress', id, stage, done, total }),
     });
     post({ type: 'result', id, results, ms: performance.now() - t0 });
